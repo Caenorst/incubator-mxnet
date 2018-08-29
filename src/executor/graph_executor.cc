@@ -236,6 +236,7 @@ nnvm::Graph GraphExecutor::InitFullGraph(nnvm::Symbol symbol,
 
   nnvm::Graph g;
   g.outputs = symbol.outputs;
+  g = FuseAddRelu(std::move(g));
   need_grad_ = false;
   for (OpReqType req : grad_req_types) {
     if (req != kNullOp) need_grad_ = true;
@@ -280,6 +281,7 @@ nnvm::Graph GraphExecutor::InitFullGraph(nnvm::Symbol symbol,
       AggregateGradient, need_mirror, nullptr,
       zero_ops, "_copy");
   CHECK_EQ(g_grad.outputs.size(), xs.size());
+  g_grad = FuseAddReluSplit(std::move(g_grad));
   for (const auto &e : g_grad.outputs) {
     g.outputs.push_back(e);
   }

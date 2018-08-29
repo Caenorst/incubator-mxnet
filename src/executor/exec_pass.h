@@ -141,6 +141,21 @@ void AttachOpResources(const Graph& g,
                        const OpExecVector& op_execs,
                        size_t start_nid,
                        size_t end_nid);
+
+/*!
+ * \brief Fuse add followed by relu by a add_relu op
+ * \param g input graph
+ * \return graph with fused add_relu
+ */
+Graph FuseAddRelu(Graph&& g);
+
+/*!
+ * \brief Fuse backward nodes of add_relu + copy_split (example skip connection of residual module)
+ * \param g input graph
+ * \return graph with fused add_relu_split
+ */
+Graph FuseAddReluSplit(Graph&& g);
+
 /*!
  * \brief Discover chance of inplace addto operators.
  *  i.e. z = plus(z, source_op), and encourage it to become z += source_op.
