@@ -38,6 +38,7 @@
 #include "../subgraph_property.h"
 #include "nnvm_to_onnx-inl.h"
 #include "./onnx_to_tensorrt.h"
+#include "../simple_partition_graph_pass.h"
 
 namespace mxnet {
 namespace op {
@@ -87,67 +88,27 @@ struct TRTEngineParam {
 
 class TensorrtSelector : public SubgraphSelector {
  public:
-  const std::unordered_set<std::string> unconditionalTRTops = {
-    "BatchNorm",
-    "clip",
-    "Concat",
-    "Convolution",
-    "Dropout",
-    "elemwise_add",
-    "elemwise_sub",
-    "elemwise_mul",
-    "Flatten",
-    "FullyConnected",
-    "mean",
-    "Pad",
-    "relu",
-    "rsqrt",
-    "SoftmaxOutput"
-  };
-
-  const std::unordered_set<std::string> withWeightsOps = {
-    "BatchNorm",
-    "Convolution",
-    "FullyConnected"
-  };
-
-  bool isTRTCompatible(const nnvm::Node &n) {
-    const std::string op_name = n.op()->name;
-    if (op_name == "Pooling") {
-      return (n.attrs.dict.at("pool_type") == "avg" ||
-          n.attrs.dict.at("pool_type") == "max");
-    }
-
-    if (unconditionalTRTops.count(op_name)) {
-      return true;
-    }
-
-    if (op_name == "Activation") {
-      return n.attrs.dict.at("act_type") == "relu" ||
-        n.attrs.dict.at("act_type") == "tanh" ||
-        n.attrs.dict.at("act_type") == "sigmoid";
-    }
-
-    return false;
-  }
+  TensorrtSelector(BidirectionalGraph::SubgraphsMap* subgraphs_map) :
+      subgraphs_map_(subgraphs_map) {}
 
   bool Select(const nnvm::Node &n) override {
-    return !n.is_variable() && isTRTCompatible(n);
+    const auto it = subgraphs_map_->find(&n);
+    if (it == subgraphs_map_->end())
+      return false;
+    subgraph_set_ = it->second;
+    return true;
   }
 
   bool SelectInput(const nnvm::Node &n, const nnvm::Node &new_node) override {
-    if (new_node.is_variable()) {
-      if (withWeightsOps.count(n.op()->name)) {
-        return n.inputs[0].node->attrs.name != new_node.attrs.name;
-      } else {
-        return false;
-      }
-    }
-    return isTRTCompatible(new_node);
+    if (subgraph_set_->count(&new_node))
+      return true;
+    return false;
   }
 
   bool SelectOutput(const nnvm::Node &n, const nnvm::Node &new_node) override {
-    return isTRTCompatible(new_node);
+    if (subgraph_set_->count(&new_node))
+      return true;
+    return false;
   }
 
   std::vector<nnvm::Node*> Filter(const std::vector<nnvm::Node*>& candidates) override {
@@ -164,6 +125,9 @@ class TensorrtSelector : public SubgraphSelector {
     }
     return std::vector<nnvm::Node*>();
   }
+ private:
+  BidirectionalGraph::SubgraphsMap* subgraphs_map_;
+  std::shared_ptr<std::unordered_set<const nnvm::Node*> > subgraph_set_;
 };
 
 class TensorrtProperty : public SubgraphProperty {
@@ -199,7 +163,27 @@ class TensorrtProperty : public SubgraphProperty {
   }
 
   SubgraphSelectorPtr CreateSubgraphSelector() const override {
-    return std::make_shared<TensorrtSelector>();
+    if (!is_initialized_) {
+      is_initialized_ = true;
+      auto& g = GetAttr<nnvm::Graph>("graph");
+      std::unordered_set<nnvm::Node*> compatible_set;
+      DFSVisit(g.outputs, [this, &compatible_set](const nnvm::NodePtr& n) {
+        if (n->op() != nullptr) {
+          if (withWeightsOps.count(n->op()->name)) {
+            for (int i = 1; i < n->inputs.size(); ++i) {
+              compatible_set.insert(n->inputs[i].node.get());
+            }
+          }
+          if (isTRTCompatible(n))
+            compatible_set.insert(n.get());
+	}
+      });
+      auto bg = BidirectionalGraph(g);
+      subgraphs_map_ = bg.get_subsets([&compatible_set](nnvm::Node* n) {
+                                        return compatible_set.count(n);
+                                      });
+    }
+    return std::make_shared<TensorrtSelector>(subgraphs_map_.get());
   }
 
   void ConnectSubgraphOutputs(const nnvm::NodePtr subgraph_node, \
@@ -233,8 +217,55 @@ class TensorrtProperty : public SubgraphProperty {
     }
     subgraph_node->attrs.parsed = std::move(_params);
   }
-};
 
+ private:
+  const std::unordered_set<std::string> unconditionalTRTops = {
+    "BatchNorm",
+    "clip",
+    "Concat",
+    "Convolution",
+    "Dropout",
+    "elemwise_add",
+    "elemwise_sub",
+    "elemwise_mul",
+    "Flatten",
+    "FullyConnected",
+    "mean",
+    "Pad",
+    "relu",
+    "rsqrt",
+    "SoftmaxOutput"
+  };
+
+  const std::unordered_set<std::string> withWeightsOps = {
+    "BatchNorm",
+    "Convolution",
+    "FullyConnected"
+  };
+
+  bool isTRTCompatible(const nnvm::NodePtr& n) const {
+    const std::string op_name = n->op()->name;
+    if (op_name == "Pooling") {
+      return (n->attrs.dict.at("pool_type") == "avg" ||
+              n->attrs.dict.at("pool_type") == "max");
+    }
+
+    if (unconditionalTRTops.count(op_name)) {
+      return true;
+    }
+
+    if (op_name == "Activation") {
+      return n->attrs.dict.at("act_type") == "relu" ||
+             n->attrs.dict.at("act_type") == "tanh" ||
+             n->attrs.dict.at("act_type") == "sigmoid";
+    }
+
+    return false;
+  }
+
+  mutable std::unique_ptr<BidirectionalGraph::SubgraphsMap> subgraphs_map_;
+  mutable bool is_initialized_ = false;
+};
 
 }  // namespace op
 }  // namespace mxnet
