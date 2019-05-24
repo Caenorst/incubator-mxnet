@@ -312,6 +312,20 @@ void ConvertRelu(NodeProto* node_proto, const NodeAttrs& /*attrs*/,
   node_proto->set_op_type("Relu");
 }
 
+void ConvertReshape(NodeProto* node_proto, const NodeAttrs& attrs,
+        const nnvm::IndexedGraph& /*ig*/,
+                    const array_view<IndexedGraph::NodeEntry>& /*inputs*/) {
+  const auto& reshape_param = nnvm::get<op::ReshapeParam>(attrs.parsed);
+  node_proto->set_op_type("Reshape");
+  // shape
+  AttributeProto* const shape = node_proto->add_attribute();
+  shape->set_name("shape");
+  shape->set_type(AttributeProto::INTS);
+  for (dim_t kval : reshape_param.shape) {
+    shape->add_ints(static_cast<int64>(kval));
+  }
+}
+
 void ConvertActivation(NodeProto* node_proto, const NodeAttrs& attrs,
                        const nnvm::IndexedGraph& /*ig*/,
                        const array_view<IndexedGraph::NodeEntry>& /*inputs*/) {

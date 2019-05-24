@@ -104,6 +104,11 @@ void ConvertRelu(NodeProto *node_proto,
                  const nnvm::IndexedGraph &ig,
                  const array_view<IndexedGraph::NodeEntry> &inputs);
 
+void ConvertReshape(NodeProto *node_proto,
+                    const NodeAttrs &attrs,
+                    const nnvm::IndexedGraph &id,
+                    const array_view<IndexedGraph::NodeEntry> &inputs);
+
 void ConvertActivation(NodeProto *node_proto,
                        const NodeAttrs &attrs,
                        const nnvm::IndexedGraph &ig,
@@ -183,6 +188,7 @@ static const std::unordered_map<std::string, ConverterFunction> converter_map = 
   {"Pad", ConvertPad},
   {"Pooling", ConvertPooling},
   {"relu", ConvertRelu},
+  {"Reshape", ConvertReshape},
   {"SoftmaxOutput", ConvertSoftmaxOutput}
 };
 

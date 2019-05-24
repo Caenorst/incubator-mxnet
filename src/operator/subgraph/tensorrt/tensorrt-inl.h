@@ -39,6 +39,8 @@
 #include "nnvm_to_onnx-inl.h"
 #include "./onnx_to_tensorrt.h"
 
+#include "../../tensor/matrix_op-inl.h"
+
 namespace mxnet {
 namespace op {
 
@@ -115,6 +117,15 @@ class TensorrtSelector : public SubgraphSelector {
     if (op_name == "Pooling") {
       return (n.attrs.dict.at("pool_type") == "avg" ||
           n.attrs.dict.at("pool_type") == "max");
+    }
+
+    if (op_name == "Reshape") {
+      auto param = nnvm::get<ReshapeParam>(n.attrs.parsed);
+      for (auto s : param.shape) {
+        if (s < -1)
+          return false;
+      }
+      return true;
     }
 
     if (unconditionalTRTops.count(op_name)) {
